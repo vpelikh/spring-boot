@@ -243,10 +243,51 @@ class JavaPluginActionIntegrationTests {
 		}
 	}
 
+	@TestTemplate
+	void aotCacheRecordingConfiguresTestJvmArgs() throws IOException {
+		// Gradle build succeeds only if the assert passes (jvmArgs contain
+		// AOTCacheOutput). Asserts recording is gated on bootBuildImage being scheduled.
+		createMinimalMainSource();
+		this.gradleBuild.build("verifyAotCache");
+	}
+
+	@TestTemplate
+	void aotCacheRecordingDoesNotConfigureTestJvmArgsWhenOnlyTestsRun() throws IOException {
+		// Gradle build succeeds only if the assert passes (jvmArgs do not contain
+		// AOTCacheOutput). Asserts recording is gated on bootBuildImage being scheduled,
+		// so a test-only run records nothing.
+		createMinimalMainSource();
+		this.gradleBuild.build("verifyNoAotCache");
+	}
+
+	@TestTemplate
+	void aotCacheRecordingDoesNotConfigureTestJvmArgsByDefault() {
+		String output = this.gradleBuild.build("help").getOutput();
+		assertThat(output).doesNotContain("-XX:AOTCacheOutput=");
+	}
+
+	@TestTemplate
+	void aotCacheRecordingFailsWhenCacheFileIsMissing() throws IOException {
+		createMinimalMainSource();
+		BuildResult result = this.gradleBuild.buildAndFail("bootBuildImage");
+		assertThat(result.getOutput()).contains("aot-cache/application.aot")
+			.contains("aotCacheRecord = true")
+			.contains("./gradlew test bootBuildImage");
+	}
+
+	@TestTemplate
+	void aotCacheRecordingAppendsToExistingTestJvmArgs() throws IOException {
+		createMinimalMainSource();
+		this.gradleBuild.build("verifyAppendedJvmArgs");
+	}
+
 	private void createMinimalMainSource() throws IOException {
 		File examplePackage = new File(this.gradleBuild.getProjectDir(), "src/main/java/com/example");
 		examplePackage.mkdirs();
-		new File(examplePackage, "Application.java").createNewFile();
+		try (java.io.Writer writer = new java.io.FileWriter(new File(examplePackage, "Application.java"))) {
+			writer.write(
+					"package com.example;\npublic class Application {\n\tpublic static void main(String[] args) {\n\t}\n}\n");
+		}
 	}
 
 }

@@ -64,6 +64,7 @@ dependencies {
 		exclude(group: "javax.inject", module: "javax.inject")
 	}
 
+	testImplementation("org.apache.maven.plugin-tools:maven-plugin-annotations")
 	testImplementation("org.apache.maven:maven-core") {
 		exclude(group: "javax.annotation", module: "javax.annotation-api")
 		exclude(group: "javax.inject", module: "javax.inject")
@@ -152,6 +153,7 @@ prepareMavenBinaries {
 
 tasks.named("documentPluginGoals") {
 	goalSections = [
+		"aot-cache-record": "aot",
 		"build-image": "build-image",
 		"build-image-no-fork": "build-image",
 		"build-info": "build-info",

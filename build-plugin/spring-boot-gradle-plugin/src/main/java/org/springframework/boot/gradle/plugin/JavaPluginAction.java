@@ -42,6 +42,7 @@ import org.gradle.api.tasks.SourceSetContainer;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.bundling.Jar;
 import org.gradle.api.tasks.compile.JavaCompile;
+import org.gradle.api.tasks.testing.Test;
 import org.gradle.jvm.toolchain.JavaToolchainService;
 import org.gradle.jvm.toolchain.JavaToolchainSpec;
 import org.jspecify.annotations.Nullable;
@@ -92,6 +93,7 @@ final class JavaPluginAction implements PluginApplicationAction {
 		configureParametersCompilerArg(project);
 		configureAdditionalMetadataLocations(project);
 		configureSpringBootStarterTestToDependOnJUnitPlatformLauncher(project);
+		configureTestAotCacheRecording(project);
 	}
 
 	private void classifyJarTask(Project project) {
@@ -238,6 +240,47 @@ final class JavaPluginAction implements PluginApplicationAction {
 		JavaToolchainSpec toolchain = project.getExtensions().getByType(JavaPluginExtension.class).getToolchain();
 		JavaToolchainService toolchainService = project.getExtensions().getByType(JavaToolchainService.class);
 		run.getJavaLauncher().convention(toolchainService.launcherFor(toolchain));
+	}
+
+	private void configureTestAotCacheRecording(Project project) {
+		TaskProvider<BootBuildImage> buildImage = project.getTasks()
+			.named(SpringBootPlugin.BOOT_BUILD_IMAGE_TASK_NAME, BootBuildImage.class);
+		project.afterEvaluate((p) -> {
+			p.getGradle().getTaskGraph().whenReady((graph) -> {
+				// Gate recording on bootBuildImage being scheduled in this project.
+				// This means tests only record when the image is actually being built
+				// (for example a `test bootBuildImage` run).
+				// Check the graph first so the bootBuildImage task is not realized during
+				// configuration, which would break Spring Boot's lazy task configuration.
+				// In a multi-project build, only this project's bootBuildImage
+				// triggers recording. Another project's task that happens to share
+				// the name does not.
+				boolean buildImageScheduled = graph.getAllTasks()
+					.stream()
+					.anyMatch((t) -> t.getProject() == p && t.getName().equals(buildImage.getName()));
+				if (!buildImageScheduled) {
+					return;
+				}
+				// Read the settled property value. Recording only happens when
+				// aotCacheRecord is enabled AND bootBuildImage is part of this build's
+				// execution. The task is in the graph by now,
+				// so realizing it to read the flag is safe.
+				if (!buildImage.flatMap(BootBuildImage::getAotCacheRecord).getOrElse(false)) {
+					return;
+				}
+				String outputPath = p.getLayout()
+					.getBuildDirectory()
+					.file("aot-cache/application.aot")
+					.get()
+					.getAsFile()
+					.getAbsolutePath();
+				// whenReady runs after the task graph is resolved, when the Test tasks
+				// are already realized. all() applies to those realized tasks, whereas
+				// configureEach() only affects tasks that are not yet realized and would
+				// therefore leave the Test JVM args unset (producing an empty cache).
+				p.getTasks().withType(Test.class).all((test) -> test.jvmArgs("-XX:AOTCacheOutput=" + outputPath));
+			});
+		});
 	}
 
 	private JavaPluginExtension javaPluginExtension(Project project) {

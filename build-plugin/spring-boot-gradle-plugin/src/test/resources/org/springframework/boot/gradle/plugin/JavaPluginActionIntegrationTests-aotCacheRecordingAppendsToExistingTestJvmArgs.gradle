@@ -1,0 +1,64 @@
+/*
+ * Copyright 2012-present the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '{version}'
+}
+
+import org.gradle.api.DefaultTask
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.testing.Test
+
+// getAllJvmArgs() returns the full effective JVM args, including both the user-configured
+// arg and any that the plugin appends during task graph resolution (e.g. via whenReady).
+// Asserting against it confirms that AOT cache recording appends to, rather than replaces,
+// the user's test JVM args.
+abstract class VerifyAppendedJvmArgs extends DefaultTask {
+
+	@Input
+	abstract ListProperty<String> getJvmArgs()
+
+	@TaskAction
+	void verify() {
+		println "VERIFY-JVMARGS=" + getJvmArgs().get()
+		assert getJvmArgs().get().contains('-Xmx512m') : "user arg -Xmx512m missing from jvmArgs: ${getJvmArgs().get()}"
+		assert getJvmArgs().get().any { it.contains('-XX:AOTCacheOutput=') } : "test missing -XX:AOTCacheOutput in jvmArgs: ${getJvmArgs().get()}"
+	}
+
+}
+
+test {
+	jvmArgs '-Xmx512m'
+}
+
+bootBuildImage {
+	aotCacheRecord = true
+}
+
+tasks.register('verifyAppendedJvmArgs', VerifyAppendedJvmArgs) {
+	dependsOn 'test'
+	dependsOn 'bootBuildImage'
+	jvmArgs = tasks.named('test', Test).map { it.allJvmArgs }
+}
+
+afterEvaluate {
+	// bootBuildImage only has to be in the execution graph to trigger recording; it does
+	// not need to build a container image here.
+	tasks.getByName('bootBuildImage').enabled = false
+}

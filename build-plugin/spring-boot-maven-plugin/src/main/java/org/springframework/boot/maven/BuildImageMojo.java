@@ -19,6 +19,7 @@ package org.springframework.boot.maven;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.function.Consumer;
@@ -89,6 +90,19 @@ public abstract class BuildImageMojo extends AbstractPackagerMojo {
 	 */
 	@Parameter(property = "spring-boot.build-image.skip", defaultValue = "false")
 	private boolean skip;
+
+	/**
+	 * Whether to record a Leyden AOT cache from the integration tests and bundle it in
+	 * the image. When enabled, the cache is only recorded and bundled when the image is
+	 * being built.
+	 * @since 4.2.0
+	 */
+	@Parameter(property = "spring-boot.aot-cache-record", defaultValue = "false")
+	private boolean aotCacheRecord;
+
+	void setAotCacheRecord(boolean aotCacheRecord) {
+		this.aotCacheRecord = aotCacheRecord;
+	}
 
 	/**
 	 * Classifier used when finding the source archive.
@@ -306,7 +320,22 @@ public abstract class BuildImageMojo extends AbstractPackagerMojo {
 		if (image.imagePlatform == null && this.imagePlatform != null) {
 			image.setImagePlatform(this.imagePlatform);
 		}
+		applyAotCacheConfiguration(image);
 		return customize(image.getBuildRequest(this.project.getArtifact(), content));
+	}
+
+	/**
+	 * Enable AOT cache bundling on the given {@link Image} when the user has opted in
+	 * through either the {@code spring-boot.aot-cache-record} property or an explicit
+	 * {@code <image><aotCacheRecord>} configuration. The cache directory is derived from
+	 * the project build directory.
+	 * @param image the image to configure
+	 */
+	void applyAotCacheConfiguration(Image image) {
+		if (this.aotCacheRecord || Boolean.TRUE.equals(image.getAotCacheRecord())) {
+			image.setAotCacheRecord(true);
+			image.cacheDirectory = Path.of(this.project.getBuild().getDirectory(), "aot-cache").toAbsolutePath();
+		}
 	}
 
 	private TarArchive getApplicationContent(Owner owner, Libraries libraries, ImagePackager imagePackager) {

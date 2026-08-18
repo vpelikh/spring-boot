@@ -1,0 +1,96 @@
+/*
+ * Copyright 2012-present the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import org.gradle.api.DefaultTask
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.testing.Test
+
+// Load the Spring Boot plugin onto the buildscript classpath (without applying it to the
+// root project) so it can be applied to the subprojects below. The `{version}` placeholder
+// is substituted by the test harness so the plugin-under-test marker resolves.
+plugins {
+	id 'org.springframework.boot' version '{version}' apply false
+}
+
+// A small input-backed task so the assertions are configuration-cache friendly: the app
+// test task's jvmArgs are wired in as an @Input property and re-resolved at execution time
+// rather than referencing the `tasks` container or a captured Provider from a doLast action.
+// Two subclasses fix the expectation so the same task name can be cached across runs.
+abstract class CheckAppTestJvmArgs extends DefaultTask {
+
+	@Input
+	abstract ListProperty<String> getJvmArgs()
+
+	protected void assertPresence(boolean expected) {
+		boolean present = getJvmArgs().get().any { it.contains('-XX:AOTCacheOutput=') }
+		assert present == expected : "app:test expected -XX:AOTCacheOutput presence=${expected} but got jvmArgs: ${getJvmArgs().get()}"
+	}
+
+}
+
+abstract class VerifyRecordingConfigured extends CheckAppTestJvmArgs {
+
+	@TaskAction
+	void verify() {
+		assertPresence(true)
+	}
+
+}
+
+abstract class VerifyRecordingNotConfigured extends CheckAppTestJvmArgs {
+
+	@TaskAction
+	void verify() {
+		assertPresence(false)
+	}
+
+}
+
+subprojects {
+	apply plugin: 'java'
+	apply plugin: 'org.springframework.boot'
+	if (name == 'app') {
+		bootBuildImage {
+			aotCacheRecord = true
+		}
+	}
+}
+
+def appTestJvmArgs = project(':app').tasks.named('test', Test).map { it.jvmArgs }
+
+// Runs :app:test and asserts it DID receive the AOT cache output arg because this project's
+// :app:bootBuildImage is scheduled (alongside the verify task).
+tasks.register('verifyRecordingConfigured', VerifyRecordingConfigured) {
+	dependsOn ':app:test'
+	jvmArgs = appTestJvmArgs
+}
+
+// Runs :app:test and asserts it did NOT receive the AOT cache output arg because only
+// :other:bootBuildImage is scheduled, which must not trigger recording on :app:test.
+tasks.register('verifyRecordingNotConfigured', VerifyRecordingNotConfigured) {
+	dependsOn ':app:test'
+	jvmArgs = appTestJvmArgs
+}
+
+afterEvaluate {
+	// bootBuildImage (and the container image it needs) is not required to actually run here;
+	// it just has to be present in the execution graph to trigger recording. Keep both in the
+	// graph so the gating logic sees them, but disable them so the build does not need Docker.
+	project(':app').tasks.getByName('bootBuildImage').enabled = false
+	project(':other').tasks.getByName('bootBuildImage').enabled = false
+}

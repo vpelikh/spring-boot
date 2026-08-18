@@ -17,6 +17,8 @@
 package org.springframework.boot.gradle.tasks.bundling;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,6 +26,7 @@ import java.util.Map;
 
 import org.gradle.api.Action;
 import org.gradle.api.DefaultTask;
+import org.gradle.api.GradleException;
 import org.gradle.api.InvalidUserDataException;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
@@ -84,6 +87,8 @@ public abstract class BootBuildImage extends DefaultTask {
 
 	private final DockerSpec docker;
 
+	private final Path aotCacheFile;
+
 	public BootBuildImage() {
 		this.projectName = getProject().getName();
 		Project project = getProject();
@@ -101,6 +106,15 @@ public abstract class BootBuildImage extends DefaultTask {
 		getCleanCache().convention(false);
 		getVerboseLogging().convention(false);
 		getPublish().convention(false);
+		getAotCacheRecord().convention(false);
+		// Resolve the AOT cache location up front so that execution does not access the
+		// project, which is not supported with the configuration cache.
+		this.aotCacheFile = project.getLayout()
+			.getBuildDirectory()
+			.file("aot-cache/application.aot")
+			.get()
+			.getAsFile()
+			.toPath();
 		this.buildWorkspace = getProject().getObjects().newInstance(LocalCacheSpec.class);
 		this.buildCache = getProject().getObjects().newInstance(CacheSpec.class);
 		this.launchCache = getProject().getObjects().newInstance(LocalCacheSpec.class);
@@ -239,6 +253,18 @@ public abstract class BootBuildImage extends DefaultTask {
 	@Input
 	@Option(option = "publishImage", description = "Publish the built image to a registry")
 	public abstract Property<Boolean> getPublish();
+
+	/**
+	 * Returns whether AOT cache should be recorded from integration tests during the
+	 * image build. When enabled, the build will run tests with {@code -XX:AOTCacheOutput}
+	 * to produce the cache file, which is then bundled into the image.
+	 * @return whether AOT cache recording is enabled
+	 * @since 4.2.0
+	 */
+	@Input
+	@Optional
+	@Option(option = "aotCacheRecord", description = "Record AOT cache from integration tests")
+	public abstract Property<Boolean> getAotCacheRecord();
 
 	/**
 	 * Returns the buildpacks that will be used when building the image.
@@ -428,6 +454,7 @@ public abstract class BootBuildImage extends DefaultTask {
 		if (getImagePlatform().isPresent()) {
 			request = request.withImagePlatform(getImagePlatform().get());
 		}
+		request = customizeAotCache(request);
 		return request;
 	}
 
@@ -534,6 +561,29 @@ public abstract class BootBuildImage extends DefaultTask {
 				return request.withSecurityOptions(securityOptions);
 			}
 		}
+		return request;
+	}
+
+	private BuildRequest customizeAotCache(BuildRequest request) {
+		if (!getAotCacheRecord().getOrElse(false)) {
+			return request;
+		}
+		Path cacheFile = this.aotCacheFile;
+		if (!Files.isRegularFile(cacheFile)) {
+			throw new GradleException(
+					"AOT cache recording was enabled (aotCacheRecord = true) but the cache file was not found at "
+							+ cacheFile
+							+ ".\n\nTo fix this, run './gradlew test bootBuildImage'. The test tasks inject "
+							+ "-XX:AOTCacheOutput=" + cacheFile + " automatically and write the cache file, which "
+							+ "bootBuildImage then bundles into the image. If you do not want AOT cache recording, set "
+							+ "'aotCacheRecord = false' on the bootBuildImage task.");
+		}
+		Path cacheDir = cacheFile.getParent();
+		if (cacheDir == null) {
+			throw new GradleException("Cannot determine the parent directory of the AOT cache file at " + cacheFile);
+		}
+		request = request.withEnv("BP_JVM_AOTCACHE_ENABLED", "true");
+		request = request.withAdditionalContent(cacheDir, "aot-cache");
 		return request;
 	}
 

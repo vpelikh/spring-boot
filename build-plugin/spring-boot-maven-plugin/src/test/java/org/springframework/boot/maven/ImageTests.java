@@ -16,6 +16,9 @@
 
 package org.springframework.boot.maven;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -34,6 +37,7 @@ import org.springframework.boot.buildpack.platform.build.PullPolicy;
 import org.springframework.boot.buildpack.platform.docker.ImagePlatform;
 import org.springframework.boot.buildpack.platform.docker.type.Binding;
 import org.springframework.boot.buildpack.platform.docker.type.ImageReference;
+import org.springframework.boot.buildpack.platform.io.CompositeTarArchive;
 import org.springframework.boot.buildpack.platform.io.Owner;
 import org.springframework.boot.buildpack.platform.io.TarArchive;
 import org.springframework.boot.maven.CacheInfo.ImageCacheInfo;
@@ -41,6 +45,7 @@ import org.springframework.boot.maven.LocalCacheInfo.BindCacheInfo;
 import org.springframework.boot.maven.LocalCacheInfo.VolumeCacheInfo;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.entry;
 import static org.mockito.Mockito.mock;
 
@@ -307,6 +312,45 @@ class ImageTests {
 		image.imagePlatform = "";
 		BuildRequest request = image.getBuildRequest(createArtifact(), mockApplicationContent());
 		assertThat(request.getImagePlatform()).isNull();
+	}
+
+	@Test
+	void getBuildRequestWhenAotCacheRecordTrueBundlesCacheWhenDirExists() throws IOException {
+		Image image = new Image();
+		image.setAotCacheRecord(true);
+		Path cacheDir = Path.of("target/aot-cache");
+		image.cacheDirectory = cacheDir;
+		try {
+			Files.createDirectories(cacheDir);
+			Files.writeString(cacheDir.resolve("application.aot"), "cache-data");
+			BuildRequest request = image.getBuildRequest(createArtifact(), mockApplicationContent());
+			assertThat(request.getEnv()).containsEntry("BP_JVM_AOTCACHE_ENABLED", "true");
+			TarArchive content = request.getApplicationContent(Owner.ROOT);
+			assertThat(content).isInstanceOf(CompositeTarArchive.class);
+		}
+		finally {
+			Files.deleteIfExists(cacheDir.resolve("application.aot"));
+			Files.deleteIfExists(cacheDir);
+		}
+	}
+
+	@Test
+	void getBuildRequestWhenAotCacheRecordTrueFailsWhenCacheFileMissing() {
+		Image image = new Image();
+		image.setAotCacheRecord(true);
+		image.cacheDirectory = Path.of("target/aot-cache");
+		assertThatThrownBy(() -> image.getBuildRequest(createArtifact(), mockApplicationContent()))
+			.isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("aot-cache/application.aot")
+			.hasMessageContaining("mvn test spring-boot:build-image")
+			.hasMessageContaining("-XX:AOTCacheOutput=");
+	}
+
+	@Test
+	void getBuildRequestWhenAotCacheRecordFalseDoesNothing() {
+		Image image = new Image();
+		BuildRequest request = image.getBuildRequest(createArtifact(), mockApplicationContent());
+		assertThat(request.getEnv()).doesNotContainKey("BP_JVM_AOTCACHE_ENABLED");
 	}
 
 	private Artifact createArtifact() {

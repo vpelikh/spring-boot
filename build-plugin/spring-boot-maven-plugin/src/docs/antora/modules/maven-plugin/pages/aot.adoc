@@ -122,3 +122,54 @@ $ mvn test -PnativeTest
 NOTE: As with application AOT processing, the `BeanFactory` is fully prepared at build-time.
 
 include::partial$goals/process-test-aot.adoc[leveloffset=+1]
+
+
+[[aot.aot-cache-recording]]
+== Recording AOT Cache from Integration Tests
+
+The `aot-cache-record` goal configures the Maven Surefire Plugin to generate a Leyden AOT cache during integration test execution.
+The cache file is written by the JVM on clean exit.
+
+To enable AOT cache recording, bind the `aot-cache-record` goal to the `initialize` phase and set the
+`spring-boot.aot-cache-record` property:
+
+[source,xml,indent=0,subs="verbatim,attributes"]
+----
+<plugin>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-maven-plugin</artifactId>
+    <executions>
+        <execution>
+            <id>aot-cache-record</id>
+            <goals>
+                <goal>aot-cache-record</goal>
+            </goals>
+        </execution>
+    </executions>
+</plugin>
+
+<properties>
+    <spring-boot.aot-cache-record>true</spring-boot.aot-cache-record>
+</properties>
+----
+
+When enabled, the goal records the cache only when the `spring-boot:build-image` goal is part of the same
+Maven execution:
+
+* Injects `-XX:AOTCacheOutput=<path>` into the Surefire `argLine` when `build-image` is scheduled
+* Writes the cache file to `target/aot-cache/application.aot`
+* Bundles the cache file into the built image
+* **Fails** `build-image` with an actionable message if the cache file is not present, so you
+  cannot silently build an image without the cache
+
+Run the tests together with the image build so the cache is recorded and then bundled in one execution:
+
+[source,bash,indent=0,subs="verbatim,attributes"]
+----
+mvn test spring-boot:build-image
+----
+
+A `mvn test`-only run does not record the cache. A `spring-boot:build-image`-only run fails unless
+`target/aot-cache/application.aot` exists (for example, left from a prior `mvn test spring-boot:build-image` run).
+
+NOTE: This feature requires Java 25 or above.
