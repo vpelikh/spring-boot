@@ -327,9 +327,17 @@ class ImageTests {
 			assertThat(request.getEnv()).containsEntry("BP_JVM_AOTCACHE_ENABLED", "true");
 			TarArchive content = request.getApplicationContent(Owner.ROOT);
 			assertThat(content).isInstanceOf(CompositeTarArchive.class);
+			// A metadata sidecar must be recorded next to the cache so the buildpack can
+			// verify the cache matches the image JRE.
+			Path metaFile = cacheDir.resolve("application.aot.meta");
+			assertThat(metaFile).exists();
+			assertThat(Files.readString(metaFile))
+				.contains("\"javaVersion\":\"" + System.getProperty("java.version") + "\"")
+				.contains("\"osArch\":\"" + System.getProperty("os.arch") + "\"");
 		}
 		finally {
 			Files.deleteIfExists(cacheDir.resolve("application.aot"));
+			Files.deleteIfExists(cacheDir.resolve("application.aot.meta"));
 			Files.deleteIfExists(cacheDir);
 		}
 	}

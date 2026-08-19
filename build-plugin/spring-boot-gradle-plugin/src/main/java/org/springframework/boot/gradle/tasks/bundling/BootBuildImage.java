@@ -582,9 +582,25 @@ public abstract class BootBuildImage extends DefaultTask {
 		if (cacheDir == null) {
 			throw new GradleException("Cannot determine the parent directory of the AOT cache file at " + cacheFile);
 		}
+		writeAotCacheMetadata(cacheFile);
 		request = request.withEnv("BP_JVM_AOTCACHE_ENABLED", "true");
 		request = request.withAdditionalContent(cacheDir, "aot-cache");
 		return request;
+	}
+
+	private void writeAotCacheMetadata(Path cacheFile) {
+		// The AOT cache is JDK- and platform-specific. Record the JDK version and
+		// architecture of the JVM that built it so the buildpack can verify the cache is
+		// compatible with the JRE baked into the image before reusing it at runtime.
+		Path metaFile = cacheFile.resolveSibling("application.aot.meta");
+		String meta = "{\"javaVersion\":\"" + System.getProperty("java.version") + "\",\"osArch\":\""
+				+ System.getProperty("os.arch") + "\"}";
+		try {
+			Files.writeString(metaFile, meta);
+		}
+		catch (IOException ex) {
+			throw new GradleException("Unable to write AOT cache metadata to " + metaFile, ex);
+		}
 	}
 
 }

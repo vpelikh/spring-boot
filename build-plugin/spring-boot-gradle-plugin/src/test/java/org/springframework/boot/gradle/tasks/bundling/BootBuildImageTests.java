@@ -428,6 +428,13 @@ class BootBuildImageTests {
 		BuildRequest request = this.buildImage.createRequest();
 		TarArchive content = request.getApplicationContent(Owner.ROOT);
 		assertThat(content).isInstanceOf(CompositeTarArchive.class);
+		// A metadata sidecar must be recorded next to the cache so the buildpack can verify
+		// the cache matches the image JRE.
+		Path metaFile = cacheFile.resolveSibling("application.aot.meta");
+		assertThat(metaFile).exists();
+		assertThat(Files.readString(metaFile))
+			.contains("\"javaVersion\":\"" + System.getProperty("java.version") + "\"")
+			.contains("\"osArch\":\"" + System.getProperty("os.arch") + "\"");
 	}
 
 	@Test
